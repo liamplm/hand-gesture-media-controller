@@ -10,9 +10,15 @@ class MediaPlayerManager:
         self.is_failed = False
 
         try:
-            self.player = Playerctl.Player()
+            m = Playerctl.PlayerManager()
+            for name in m.props.player_names:
+                # print('name', x.name)
+                if name.name == 'vlc':
+                    self.player = Playerctl.Player.new_from_name(name)
+
             self.last_toggle = time()
-        except:
+        except Exception as e:
+            print(e)
             self.is_failed = True
 
 
