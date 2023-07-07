@@ -1,11 +1,10 @@
-from typing import Dict, List, Literal, Tuple, TypedDict, Union 
+from typing import List, Literal, Tuple, TypedDict
 import cv2
 import math
 
 ## Types
 Landmarks = List[Tuple[int, int, int]]
 HandType = Literal["Right", "Left"]
-# Hand = Dict[Literal["lmList", "bbox", "type"], Union[List, str, int]]
 class Hand(TypedDict):
     lmList: Landmarks
     bbox: Tuple[int, int, int, int]
@@ -16,6 +15,10 @@ class Hand(TypedDict):
 POINTER_FINGER_ID = 8
 THUMB_FINGER_ID = 4
 LITTLE_FINGER_ID = 17
+MAX_VOL = 1.25
+PINCH_CLOSE_OFFSET = 25
+PINCH_OPEN_OFFSET = 40
+FACE_REACTION_RATE = 0.8
 
 ## Methods
 def get_dis(p1, p2):
@@ -33,6 +36,8 @@ class HandGestureDetector:
         self.vol = 0
         self.last_pointer_pos = [-1,-1]
         self.w = self.h = 0
+        self.is_pinched = False
+        self.face_y = -1
 
     def set_size(self, w, h):
         self.w = w
@@ -44,7 +49,7 @@ class HandGestureDetector:
 
         hand = hands[0]
         landmarks = hand["lmList"]
-        hand_bb = hand["bbox"]
+        # hand_bb = hand["bbox"]
         hand_type = hand["type"]
 
         pointer = landmarks[POINTER_FINGER_ID]
@@ -81,11 +86,10 @@ class HandGestureDetector:
                 self.is_gone_toggle_pause = False
                 vol_move = -(self.pinch_start_pos[0] - pointer[0]) / (self.w * 0.7)
 
-                new_vol = min(self.vol + vol_move, 1)
+                new_vol = min(self.vol + vol_move, MAX_VOL)
                 print(f"volume {new_vol:.2f}")
                 player_manager.set_volume(new_vol)
-
-        elif not is_higher_then_face:
+        else:
             self.is_gone_toggle_pause = False
             if self.is_action_callable:
                 if face_zone_xs[1] < pointer[0] and is_pinched:
@@ -106,15 +110,27 @@ class HandGestureDetector:
         self.last_pointer_pos = pointer
 
     def handle_faces(self, faces): 
-        face_y = int(self.h * 0.5)
-        # face_zone_xs = [int(w * 0.4), int(w * 0.6)]
-        face_zone_xs = [int(self.w * 0.5), int(self.w * 0.51)]
-        # if len(faces) == 1:
-        #     face = faces[0]
-        #     _, _face_y = face['center']
-        #     face_y = int(face_y *0.95 + _face_y * 0.05)
+        face_zone_xs = [-1, -1]
+        _face_y = -1
 
-        return face_y, face_zone_xs
+        if len(faces) == 1:
+            face = faces[0]
+            _, _face_y = face['center']
+            x,y,w,h = face['bbox']
+            face_zone_xs = [x, x + w]
+        else:
+
+            _face_y = int(self.h * 0.5)
+            # face_zone_xs = [int(w * 0.4), int(w * 0.6)]
+            face_zone_xs = [int(self.w * 0.5), int(self.w * 0.51)]
+        
+        if self.face_y == -1:
+            self.face_y = _face_y
+        else:
+            self.face_y = int(self.face_y * FACE_REACTION_RATE + _face_y * (1-FACE_REACTION_RATE))
+        
+
+        return self.face_y, face_zone_xs
 
     def draw_regions(self, img, face_y, face_zone_xs):
         cv2.line(img, (0,face_y), (self.w, face_y), (20,200,20), 5)
@@ -129,7 +145,9 @@ class HandGestureDetector:
 
         # When your pinching fingers are more narrow then the other fingers
         # and hand is at the right direction (facing camera)
-        is_command_mode = little_finger[2] < -10 and \
+        # is_command_mode = pointer[2] < -10 and \
+        #                  hand_direction
+        is_command_mode = \
                          hand_direction
 
         # print(little_finger[2], hand_direction, end='\t')
@@ -141,24 +159,32 @@ class HandGestureDetector:
         # print(pointer_speed_y)
 
         # print(pt_dis, is_command_mode)
-        # is_looking_pinched = pt_dis < 25 and is_command_mode  
+        is_looking_pinched = pt_dis < PINCH_CLOSE_OFFSET and is_command_mode  
+        if is_looking_pinched:
+            self.is_pinched = True
+        elif not is_command_mode:
+            self.is_pinched = False
+        elif self.is_pinched:
+            if pt_dis > PINCH_OPEN_OFFSET:
+                self.is_pinched = False
+
         # is_pinched = pt_dis < 34 and is_command_mode  
-        is_pinched = pt_dis < 30
+        # is_pinched = pt_dis < 30
         # is_pinched = is_looking_pinched if is_pinched else is_looking_pinched and abs(pointer_speed_y) < 30
         is_higher_then_face = face_y > pointer[1]
 
-        return is_pinched, is_higher_then_face
+        return self.is_pinched, is_higher_then_face
 
     def draw_hand_landmarks(self, landmarks: Landmarks, img):
         for i, lm in enumerate(landmarks):
             pos = lm[:2]
             idx = (i) // 4
-            if 1 or i % 4 == 0:
+            # if 1 or i % 4 == 0:
                 # print(i, lm)
                 # cv2.circle(img, pos, 5, (50,50,255) if idx - 1 > 0 and  fingers[idx - 1] else (50,250,55))
                 # cv2.putText(img, f"{idx}-{i}", pos, cv2.FONT_HERSHEY_PLAIN, 1, (0,255,0))
-                cv2.circle(img, pos, 5, [255 * ((lm[2] + 100) / 200)  for _ in range(3)], -1)
-                cv2.putText(img, f"{i}", pos, cv2.FONT_HERSHEY_PLAIN, 1, (0,255,0))
+            cv2.circle(img, pos, 5, [255 * ((lm[2] + 100) / 200)  for _ in range(3)], -1)
+            cv2.putText(img, f"{i}", pos, cv2.FONT_HERSHEY_PLAIN, 1, (0,255,0))
 
         return img
 

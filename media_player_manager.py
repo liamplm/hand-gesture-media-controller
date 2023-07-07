@@ -17,6 +17,9 @@ class MediaPlayerManager:
                     self.player = Playerctl.Player.new_from_name(name)
 
             self.last_toggle = time()
+
+            if not self.player:
+                raise Exception('no player')
         except Exception as e:
             print(e)
             self.is_failed = True
